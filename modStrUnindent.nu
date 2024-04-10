@@ -34,9 +34,8 @@ export def "str unindent" [] {
         str length
       }
     }
-    | sort-by indent
-    | first
     | get indent
+    | math min
   )
 
   let removeSpaces = ('' | fill -c ' ' -w $minimumIndent)
