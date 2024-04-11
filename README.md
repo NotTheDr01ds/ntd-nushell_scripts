@@ -10,7 +10,7 @@
 
     Taking the Unix philosophy of shells,
     where pipes connect simple commands
-    together, and bring it to the modern
+    together, and bringing it to the modern
     style of development.
   "
 > $intro | str unindent
@@ -23,7 +23,7 @@
 
 Taking the Unix philosophy of shells,
 where pipes connect simple commands
-together, and bring it to the modern
+together, and bringing it to the modern
 style of development.
 ```
 
