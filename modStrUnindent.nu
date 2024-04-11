@@ -32,7 +32,7 @@ export def "str unindent" [] {
         null
       } else {
         $line.text
-        | parse -r '^(?<indent>\s+)'
+        | parse -r '^(?<indent> +)'
         | get indent.0?
         | default ''
         | str length
