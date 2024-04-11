@@ -1,4 +1,24 @@
-export def "str unindent" [] {
+# Remove common indent from a multi-line string
+#
+# Example:
+#
+# > let intro = "
+# > let intro = "
+#         * Welcome to Nushell *
+#
+#   Taking the Unix philosophy of shells,
+#   where pipes connect simple commands
+#   together, and bring it to the modern 
+#   style of development.
+# "
+# > $intro | str unindent
+#        * Welcome to Nushell *
+#
+# Taking the Unix philosophy of shells,
+# where pipes connect simple commands
+# together, and bring it to the modern 
+# style of development.
+export def "str unindent" []: string -> string {
   let text = $in
   let length = ($text | lines | length)
 
@@ -54,4 +74,3 @@ export def "str unindent" [] {
   | to text
 
 }
-
