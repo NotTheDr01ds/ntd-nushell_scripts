@@ -13,6 +13,14 @@ export def tokenize_line [] {
     | update content { split row ";" | each { into int } }
   )
 
+  # Return early if there were no tokens, only text
+  if $ansi_indices == [] {
+    return [{
+      type: "text"
+      content: $line
+    }]
+  }
+
   # Identify the indices of all gaps
   # between the ansi formatting codes
   let gaps = (
@@ -208,6 +216,12 @@ def "str indices-of" [pattern:string] string->list<int> {
   }
 }
 
+export def "encode html-entities" []: [string -> string] {
+    { tag: "s", content: [$in] }
+    | to xml
+    | str replace -r '<s>(.*)</s>' '$1'
+}
+
 def preface [] {
   $'<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">'
 }
@@ -227,7 +241,7 @@ def parse_ansi_color [] {
 
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
-def process_line_tokens [preexisting_state = {}] {
+export def process_line_tokens [preexisting_state = {}] {
   def create_result [html, unclosed_span_count] {
     { html: $html, unclosed_span_count: $unclosed_span_count }
   }
@@ -266,6 +280,8 @@ def process_line_tokens [preexisting_state = {}] {
         match $token.content {
           # ANSI Reset
           [ 0 ] => {
+            # TODO: span_level needs to go to 0
+            # and all spans need to be closed
             {
               html: ($state.html + "</tspan>")
               span_level: ($state.span_level - 1)
@@ -275,6 +291,7 @@ def process_line_tokens [preexisting_state = {}] {
           [ 38 2 $r $g $b ] => {
             {
               html: ($state.html + $"<tspan fill="rgb\(($r),($g),($b)\)">")
+              span_level: ($state.span_level + 1)
             }
           }
           # Otherwise, no state change for
@@ -302,7 +319,12 @@ def process_line_tokens [preexisting_state = {}] {
 }
 
 export def "to svg" [] {
-  let input = ($in | table -e | lines)
+  let input = (
+    $in
+    | table -e
+    | encode html-entities
+    | lines
+  )
 
   let first_line = $'<tspan x="10" dy="00">($input.0)</tspan>'
 
@@ -312,8 +334,7 @@ export def "to svg" [] {
     | reduce -f '' {|it,acc|
         $acc ++ $'<tspan x="10" dy="18">($it)</tspan>'
     }
-  )
-
+  ) | default ""
 
   (preface) + $first_line + $remaining + (close)
   | lines
