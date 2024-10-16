@@ -1,5 +1,5 @@
-# Public
-
+# Temporarily exported for testing
+# Remove when done
 export def tokenize_line [] {
   let line = $in
   
@@ -10,6 +10,7 @@ export def tokenize_line [] {
     | upsert type { "ansi" }
     | rename -c { result: "content"}
     | update content { str replace --regex "\\e\\[(.*)m" "$1"}
+    | update content { split row ";" | each { into int } }
   )
 
   # Identify the indices of all gaps
@@ -27,9 +28,9 @@ export def tokenize_line [] {
 
   # If there's a text token before the first
   # ansi token, we need to include it
-  let first_ansi_escape_start = (
+  let first_ansi_escape_start = try {
     $ansi_indices | first | get begin
-  )
+  } catch { 0 }
   let opening_text = (
     if $first_ansi_escape_start > 0 {
       [{
@@ -46,9 +47,9 @@ export def tokenize_line [] {
 
   # And if there's text after the last
   # ansi token, we need to include it
-  let last_ansi_escape_end = (
+  let last_ansi_escape_end = try {
     $ansi_indices | last | get end
-  )
+  } catch { $line | str length }
   let closing_text = (
     if ($last_ansi_escape_end < ($line | str length)) {
       [{
@@ -92,9 +93,101 @@ export def tokenize_line [] {
 
 }
 
-# Private
+# Removes common indent from a multi-line string based on the number of spaces on the last line.
+# 
+# A.k.a. Unindent
+#
+# Example - Two leading spaces are removed from all lines:
+#
+# > let s = "
+#      Heading
+#        Indented Line
+#        Another Indented Line
+#
+#      Another Heading
+#      "
+# > $a | str dedent
+#
+# Heading
+#   Indented Line
+#   Another Indented Line
+#
+# Another Heading
+export def dedent []: string -> string {
+    let string = $in
 
-export def "str indices-of" [pattern:string] string->list<int> {
+    if ($string | describe) != "string" {
+        let span = (view files | last)
+        error make {
+            msg: 'Requires multi-line string as pipeline input'
+            label: {
+                text: "err::pipeline_input"
+                span: {
+                    start: $span.start
+                    end: $span.end
+                }
+            }
+        }
+    }
+
+    if ($string !~ '^\s*\n') {
+        return (error make --unspanned {
+            msg: $'($string)\nFirst line must be empty'
+        })
+    }
+
+    if ($string !~ '\n\s*$') {
+        return (error make {
+            msg: 'Last line must contain only whitespace indicating the dedent'
+        })
+     }
+
+    # Get number of spaces on the last line
+    let indent = $string
+        | str replace -r '(?s).*\n( *)$' '$1'
+        | str length
+
+    # Skip the first and last lines
+    let lines = (
+        $string
+        | str replace -r '(?s)^[^\n]*\n(.*)\n[^\n]*$' '$1'
+          # Use `split` instead of `lines`, since `lines` will
+          # drop legitimate trailing empty lines
+        | split row "\n"
+        | enumerate
+        | rename lineNumber text
+    )
+
+    let spaces = ('' | fill -c ' ' -w $indent)
+
+    # Has to be done outside the replacement block or the error
+    # is converted to text. This is probably a Nushell bug, and
+    # this code can be recombined with the next iterator when
+    # the Nushell behavior is fixed.
+    for line in $lines {
+        if ($line.text !~ '^\s*$') and ($line.text | str index-of --range 0..($indent) $spaces) == -1 {
+            error make {
+                msg: $"Line ($line.lineNumber + 1) must be indented by ($indent) or more spaces."
+            }
+        }
+    }
+
+    $lines
+    | each {|line|
+        # Don't operate on lines containing only whitespace
+        if ($line.text !~ '^\s*$') {
+            $line.text | str replace $spaces ''
+        } else {
+            $line.text
+        }
+      }
+    | to text
+      # Remove the trailing newline which indicated
+      # indent level
+    | str replace -r '(?s)(.*)\n$' '$1'
+}
+
+def "str indices-of" [pattern:string] string->list<int> {
   let searchString = $in
   let parsePattern = [ '(?P<matches>', $pattern, ')' ] | str join
   let matches = ($searchString | parse -r $parsePattern | get matches)
@@ -116,16 +209,10 @@ export def "str indices-of" [pattern:string] string->list<int> {
 }
 
 def preface [] {
-  $'
-  <svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">
-    <text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">
-  '
+  $'<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">'
 }
 def close [] {
-  $'
-    </text>
-  </svg>
-  '
+  $'</text></svg>'
 }
 
 def close_spans [level:int] {
@@ -140,7 +227,7 @@ def parse_ansi_color [] {
 
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
-def process_ansi_in_line [preexisting_state = {}] {
+def process_line_tokens [preexisting_state = {}] {
   def create_result [html, unclosed_span_count] {
     { html: $html, unclosed_span_count: $unclosed_span_count }
   }
@@ -149,52 +236,87 @@ def process_ansi_in_line [preexisting_state = {}] {
 
   }
 
-  let span_generator = {||
+  let tokens = ($in | tokenize_line)
+
+  # Initial state
+  # Currently new state for each line
+  # But needs to preserve existing state
+  # from previous line(s)
+  let state = {
+    color: null
+    bold: false
+    italics: false
+    underline: false
+    strikethrough: false
+    reverse: false
+    dimmed: false
+    blink: false
+    hidden: false
+
+    html: ""
+    span_level: 0
   }
 
-  let line = $in
+  # Reduce tokens to a state.
+  # Each token results in a new state.
+  # New state is merged into cumultative state.
+  $tokens | reduce -f $state {|token,state|
+    let new_state = match $token.type {
+      'ansi' => {
+        match $token.content {
+          # ANSI Reset
+          [ 0 ] => {
+            {
+              html: ($state.html + "</tspan>")
+              span_level: ($state.span_level - 1)
+            }
+          }
 
-
-
-  print $spans
-
-  let result_text = $spans | reduce -f (create_result "" 0) {|span,result|
-    mut unclosed_span_count = 0;
-    let escapes = ($span.escape? | default "")
-    let codes = ($escapes | split row ';')
-    let text = ($span.text? | default "")
-
-    let add_html = match $codes {
-      # ANSI reset - Close all unclosed tspans
-      [ 0 ] => { close_spans $unclosed_span_count }
+          [ 38 2 $r $g $b ] => {
+            {
+              html: ($state.html + $"<tspan fill="rgb\(($r),($g),($b)\)">")
+            }
+          }
+          # Otherwise, no state change for
+          # unimplemented attributes
+          _ => {
+            # print ("No match found for: \n" + ($token.content | table -e ))
+            {
+              html: ($state.html + $"<tspan>")
+            }
+          }
+        }
+      }
+      'text' => {
+        {
+          html: ($state.html + $token.content)
+        }
+      }
     }
-    #print (create_result $text 0)
-    create_result ($result.html + $text) 0
-  }
 
-  $result_text
+    $state | merge $new_state
+
+  }
+  | get html
 
 }
 
 export def "to svg" [] {
   let input = ($in | table -e | lines)
 
-  let first_line = $'
-        <tspan x="10" dy="00">($input.0)</tspan>
-  '
+  let first_line = $'<tspan x="10" dy="00">($input.0)</tspan>'
 
   let remaining = (
     $input
     | skip
     | reduce -f '' {|it,acc|
-        $acc ++ $'
-              <tspan x="10" dy="18">($it)</tspan>
-        '
+        $acc ++ $'<tspan x="10" dy="18">($it)</tspan>'
     }
   )
 
 
   (preface) + $first_line + $remaining + (close)
   | lines
-  | each { process_ansi_in_line }
+  | each { process_line_tokens }
+  | to text
 }
