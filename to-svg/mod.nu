@@ -1,3 +1,5 @@
+use std/util repeat
+
 # Temporarily exported for testing
 # Remove when done
 export def tokenize_line [] {
@@ -253,7 +255,7 @@ def "state set-color" [
 }
 
 def create_tspan [] {
-  let state = $in
+  let state = $in | close_spans
 
   let fill = match $state.text_color {
     [ $r, $g, $b ] => $"fill=\"rgb\(($r),($g),($b)\)\""
@@ -264,7 +266,7 @@ def create_tspan [] {
   }
 
   let text_decoration = (
-    match ([ $state.underline $state.strikethrough ] | any {true}) {
+    match ([ $state.underline $state.strikethrough ] | any {$in == true}) {
       false => ""
       true => {
         [
@@ -272,27 +274,43 @@ def create_tspan [] {
           (if $state.strikethrough { "line-through" } else { "" })
         ]
         | str join ' '
-        | $'text-decoration="($in)"'
+        | $'text-decoration="($in | str trim)"'
       }
     }
   )
 
   let attr_set = [ $fill, $font_weight, $text_decoration ]
   | where $it != ''
+  | where $it != null
   | str join ' '
 
   # Return the state with the updated HTML
   $state
-  | merge {
-      html: ($state.html + $"<tspan ($attr_set)>")
-      span_level: ($state.span_level + 1)
-    }
+  | merge (
+      match $attr_set {
+        '' => {{}}
+        _ => {
+          html: ($state.html + $'<tspan ($attr_set)>')
+          span_level: ($state.span_level + 1)
+        }
+      }
+  )
+}
+
+def attribute_state [attr_id] {
+  match $attr_id {
+    1 => { bold: true }
+    2 => { dimmed: true }
+    3 => { italics: true }
+    4 => { underline: true }
+    9 => { strikethrough: true }
+    _ => {}
+  } 
 }
 
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
 export def process_line_tokens [preexisting_state = {}] {
-  use std/util repeat
 
   let tokens = ($in | tokenize_line)
 
@@ -300,7 +318,7 @@ export def process_line_tokens [preexisting_state = {}] {
   # Currently new state for each line
   # But needs to preserve existing state
   # from previous line(s)
-  let state = {
+  let default_state = {
     text_color: null
     text_background: null
     bold: false
@@ -320,17 +338,16 @@ export def process_line_tokens [preexisting_state = {}] {
   # Each token results in a new state.
   # New state is merged into cumultative state.
   # State includes the current HTML text.
-  let line_state = ($tokens | reduce -f $state {|token,state|
+  let line_state = ($tokens | reduce -f $default_state {|token,state|
     let new_state = match $token.type {
       'ansi' => {
         match $token.content {
           # ANSI Reset
           [ 0 ] => {
-            let close_spans = ('</tspan>' | repeat $state.span_level | str join '')
-            {
-              html: ($state.html + $close_spans)
-              span_level: 0
-            }
+            $state
+            | close_spans
+            # Reset everything to defaults except the html
+            | merge ($default_state | reject html)
           }
 
           # Set color via RGB
@@ -340,13 +357,15 @@ export def process_line_tokens [preexisting_state = {}] {
             }
           }
           
+          # attribute alone
+          [ $attr ] if ($attr in 1..9) => {
+            attribute_state $attr
+          }
+
           # attribute followed by an RGB color
           [ $attr $r $g $b ] if ($attr in 1..9) => {
-            print "Found attr"
-            {
-              html: ($state.html + '<tspan fill="red" font-weight="bold">')
-              span_level: ($state.span_level + 1)
-            }
+            (attribute_state $attr)
+            # TODO - Merge color
           }
           # Otherwise, no state change for
           # unimplemented attributes
@@ -375,7 +394,9 @@ export def process_line_tokens [preexisting_state = {}] {
           # Otherwise we need to calculate
           # the new tspan from the attributes
           # and merge the updated HTML in
-          'ansi' => { $state | merge $new_state | create_tspan }
+          'ansi' => { 
+            $state | merge $new_state | create_tspan 
+          }
           # 'ansi' => { $state | merge $new_state }
 
           _ => {{}}
@@ -388,7 +409,6 @@ export def process_line_tokens [preexisting_state = {}] {
   # need to return the full state in case
   # it crosses to the next line
   $line_state | close_spans | get html
-
 }
 
 export def "to svg" [] {
@@ -412,7 +432,4 @@ export def "to svg" [] {
 
   ((preface) + $first_line + $remaining + (close))
   | to text
-  #| lines
-  #| each { process_line_tokens }
-  #| to text
 }
