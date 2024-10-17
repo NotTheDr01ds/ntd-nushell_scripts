@@ -219,7 +219,7 @@ def "str indices-of" [pattern:string] string->list<int> {
 export def "encode html-entities" []: [string -> string] {
     { tag: "s", content: [$in] }
     | to xml
-    | str replace -r '<s>(.*)</s>' '$1'
+    | str replace -r '(?ms)<s>(.*)</s>' '$1'
 }
 
 def preface [] {
@@ -229,26 +229,70 @@ def close [] {
   $'</text></svg>'
 }
 
-def close_spans [level:int] {
-
+def close_spans [] {
+  let state = $in
+  let close_spans = ('</tspan>' | repeat $state.span_level | str join '')
+  $state | merge {
+    html: ($state.html + $close_spans)
+    span_level: 0
+  }
 }
 
+# Original main magic to the PoC
 def parse_rgb_color [] {
   str replace --all --regex $"(ansi esc)\\[38;2;\(.*?\);\(.*?\);\(.*?\)m\(.*?\)(ansi esc)\\[0m" '<tspan fill="rgb($1,$2,$3)">$4</tspan>'
 }
-def parse_ansi_color [] {
+
+def "state set-color" [
+  --rgb: list<int>
+  --xterm: int
+  --sgb: int
+] {
+
+
+}
+
+def create_tspan [] {
+  let state = $in
+
+  let fill = match $state.text_color {
+    [ $r, $g, $b ] => $"fill=\"rgb\(($r),($g),($b)\)\""
+  }
+
+  let font_weight = match $state.bold {
+    true => 'font-weight="bold"'
+  }
+
+  let text_decoration = (
+    match ([ $state.underline $state.strikethrough ] | any {true}) {
+      false => ""
+      true => {
+        [
+          (if $state.underline { "underline" } else { "" })
+          (if $state.strikethrough { "line-through" } else { "" })
+        ]
+        | str join ' '
+        | $'text-decoration="($in)"'
+      }
+    }
+  )
+
+  let attr_set = [ $fill, $font_weight, $text_decoration ]
+  | where $it != ''
+  | str join ' '
+
+  # Return the state with the updated HTML
+  $state
+  | merge {
+      html: ($state.html + $"<tspan ($attr_set)>")
+      span_level: ($state.span_level + 1)
+    }
 }
 
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
 export def process_line_tokens [preexisting_state = {}] {
-  def create_result [html, unclosed_span_count] {
-    { html: $html, unclosed_span_count: $unclosed_span_count }
-  }
-
-  def close_spans [ results ] {
-
-  }
+  use std/util repeat
 
   let tokens = ($in | tokenize_line)
 
@@ -257,7 +301,8 @@ export def process_line_tokens [preexisting_state = {}] {
   # But needs to preserve existing state
   # from previous line(s)
   let state = {
-    color: null
+    text_color: null
+    text_background: null
     bold: false
     italics: false
     underline: false
@@ -274,32 +319,40 @@ export def process_line_tokens [preexisting_state = {}] {
   # Reduce tokens to a state.
   # Each token results in a new state.
   # New state is merged into cumultative state.
-  $tokens | reduce -f $state {|token,state|
+  # State includes the current HTML text.
+  let line_state = ($tokens | reduce -f $state {|token,state|
     let new_state = match $token.type {
       'ansi' => {
         match $token.content {
           # ANSI Reset
           [ 0 ] => {
-            # TODO: span_level needs to go to 0
-            # and all spans need to be closed
+            let close_spans = ('</tspan>' | repeat $state.span_level | str join '')
             {
-              html: ($state.html + "</tspan>")
-              span_level: ($state.span_level - 1)
+              html: ($state.html + $close_spans)
+              span_level: 0
             }
           }
 
+          # Set color via RGB
           [ 38 2 $r $g $b ] => {
             {
-              html: ($state.html + $"<tspan fill="rgb\(($r),($g),($b)\)">")
+              text_color: [$r, $g, $b]
+            }
+          }
+          
+          # attribute followed by an RGB color
+          [ $attr $r $g $b ] if ($attr in 1..9) => {
+            print "Found attr"
+            {
+              html: ($state.html + '<tspan fill="red" font-weight="bold">')
               span_level: ($state.span_level + 1)
             }
           }
           # Otherwise, no state change for
           # unimplemented attributes
           _ => {
-            # print ("No match found for: \n" + ($token.content | table -e ))
+            print ("No match found for: \n" + ($token.content | table -e ))
             {
-              html: ($state.html + $"<tspan>")
             }
           }
         }
@@ -311,10 +364,30 @@ export def process_line_tokens [preexisting_state = {}] {
       }
     }
 
-    $state | merge $new_state
+    $state
+    | merge (
+        match $token.type {
+          # If it was a text token,
+          # then the state already has
+          # the updated HTML from above
+          'text' => $new_state
 
-  }
-  | get html
+          # Otherwise we need to calculate
+          # the new tspan from the attributes
+          # and merge the updated HTML in
+          'ansi' => { $state | merge $new_state | create_tspan }
+          # 'ansi' => { $state | merge $new_state }
+
+          _ => {{}}
+        }
+      )
+    }
+  )
+
+  # Right now, returning HTML, but we
+  # need to return the full state in case
+  # it crosses to the next line
+  $line_state | close_spans | get html
 
 }
 
@@ -322,8 +395,9 @@ export def "to svg" [] {
   let input = (
     $in
     | table -e
-    | encode html-entities
     | lines
+    | each { encode html-entities }
+    | each { process_line_tokens }
   )
 
   let first_line = $'<tspan x="10" dy="00">($input.0)</tspan>'
@@ -336,8 +410,9 @@ export def "to svg" [] {
     }
   ) | default ""
 
-  (preface) + $first_line + $remaining + (close)
-  | lines
-  | each { process_line_tokens }
+  ((preface) + $first_line + $remaining + (close))
   | to text
+  #| lines
+  #| each { process_line_tokens }
+  #| to text
 }
