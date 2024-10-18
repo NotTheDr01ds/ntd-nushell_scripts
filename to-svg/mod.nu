@@ -263,40 +263,43 @@ def sgr-range [] {
   ]
 }
 
-def sgr-color [idx:int] {
-  let rgb = [
+def basic-colors [] {
+  [
     # Standard (Start at 30 for foreground, 40 for background)
     [0, 0, 0]         # Black
-    [205, 0, 0]       # Red
+    [205, 0, 0]       # Red/Maroon
     [0, 205, 0]       # Green
-    [205, 205, 0]     # Yellow
-    [0, 0, 238]       # Blue
-    [205, 0, 205]     # Magenta
-    [0, 205, 205]     # Cyan
-    [229, 229, 229]   # White
+    [205, 205, 0]     # Yellow/Olive
+    [0, 0, 238]       # Blue/Navy
+    [205, 0, 205]     # Magenta/Purple
+    [0, 205, 205]     # Cyan/Teal
+    [229, 229, 229]   # White/Silver
     # Bright Colors (Standrd index + 60)
     [127, 127, 127]   # Bright Black (Gray)
-    [255, 0, 0]       # Bright Red
-    [0, 255, 0]       # Bright Green
-    [255, 255, 0]     # Bright Yellow
-    [92, 92, 255]     # Bright Blue
-    [255, 0, 255]     # Bright Magenta
-    [0, 255, 255]     # Bright Cyan
-    [255, 255, 255]    # Bright White
+    [255, 0, 0]       # Bright Red/Red
+    [0, 255, 0]       # Bright Green/Lime
+    [255, 255, 0]     # Bright Yellow/Yellow
+    [92, 92, 255]     # Bright Blue/Blue
+    [255, 0, 255]     # Bright Magenta/Fuchsia
+    [0, 255, 255]     # Bright Cyan/Aqua
+    [255, 255, 255]    # Bright White/White
   ]
+}
+
+def sgr-color [idx:int] {
 
   match $idx {
     $std_fg if $std_fg in 30..37 => {
-      text_color: ($rgb | get ($std_fg - 30))
+      text_color: ((basic-colors) | get ($std_fg - 30))
     }
     $bright_fg if $bright_fg in 90..97 => {
-      text_color: ($rgb | get ($bright_fg - 82))
+      text_color: ((basic-colors) | get ($bright_fg - 82))
     }
     $std_bg if $std_bg in 40..47 => {
-      text_color: ($rgb | get ($std_bg - 40))
+      text_color: ((basic-colors) | get ($std_bg - 40))
     }
     $bright_bg if $bright_bg in 100..107 => {
-      text_color: ($rgb | get ($bright_bg - 92))
+      text_color: ((basic-colors) | get ($bright_bg - 92))
     }
   }
 }
@@ -403,6 +406,7 @@ export def process_line_tokens [preexisting_state = {}] {
     hidden: false
 
     html: ""
+    background_html: ""
     span_level: 0
   }
 
@@ -456,6 +460,16 @@ export def process_line_tokens [preexisting_state = {}] {
           [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
             (attribute_state $attr)
             | merge (set-color [$r, $g, $b])
+          }
+
+          # xterm colors
+          [ 38 5 $xcolor ] => {
+            print "38 5 color found"
+          }
+
+          # xterm colors
+          [ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
+            print "attr 38 5 color found"
           }
 
           # Default foreground
@@ -513,10 +527,12 @@ export def process_line_tokens [preexisting_state = {}] {
 }
 
 export def "to svg" [] {
+  # Warning: Don't use $in here - It eats the metadata and won't
+  # properly handle lscolors
   let input = (
-    $in
-    | table -e
+    table -e
     | lines
+    #| each { tee { table -e | encode utf-8 | print $in }}
     | each { encode html-entities }
     | each { process_line_tokens }
   )
