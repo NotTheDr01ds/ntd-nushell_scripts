@@ -314,11 +314,47 @@ def set-color [color, --background, --color-type: string] {
   
   match $color_type {
     sgb => {
-
+      match $color {
+        $std_fg if $std_fg in 30..37 => {
+          $attr: ((basic-colors) | get ($std_fg - 30))
+        }
+        $bright_fg if $bright_fg in 90..97 => {
+          $attr: ((basic-colors) | get ($bright_fg - 82))
+        }
+        $std_bg if $std_bg in 40..47 => {
+          $attr: ((basic-colors) | get ($std_bg - 40))
+        }
+        $bright_bg if $bright_bg in 100..107 => {
+          $attr: ((basic-colors) | get ($bright_bg - 92))
+        }
+      }
     }
 
     xterm => {
+      match $color {
+        # Primary and Bright Colors
+        0..15 => ((basic-colors) | get $color)
 
+        # RGB Color Cube
+        16..231 => {
+          let cube_index = $color - 16
+          # Calculated Red, Green, Blue values
+          [
+            ($cube_index // 36 * 51)
+            ($cube_index mod 36 // 6 * 51)
+            ($cube_index mod 36 mod 6 * 51 )
+          ]
+        }
+
+        # Grayscale
+        232..255 => {
+          let gray = ($color - 232) * 10 + 8
+          [ $gray, $gray, $gray ]
+        }
+      }
+      | {
+        $attr: $in
+      }
     }
 
     _ => {
@@ -464,12 +500,13 @@ export def process_line_tokens [preexisting_state = {}] {
 
           # xterm colors
           [ 38 5 $xcolor ] => {
-            print "38 5 color found"
+            (set-color $xcolor --color-type xterm)
           }
 
-          # xterm colors
+          # Attr + xterm Color
           [ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
-            print "attr 38 5 color found"
+            (attribute_state $attr)
+            | merge (set-color $xcolor --color-type xterm)
           }
 
           # Default foreground
