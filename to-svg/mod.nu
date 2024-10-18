@@ -224,8 +224,13 @@ export def "encode html-entities" []: [string -> string] {
     | str replace -r '(?ms)<s>(.*)</s>' '$1'
 }
 
-def preface [] {
-  $'<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg"><text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">'
+def preface [
+  --width (-w): int
+  --height(-h): int
+  --fg-color (-f): list
+  --bg-color (-b): list
+] {
+  $'<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg"><text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">'
 }
 def close [] {
   $'</text></svg>'
@@ -245,16 +250,83 @@ def parse_rgb_color [] {
   str replace --all --regex $"(ansi esc)\\[38;2;\(.*?\);\(.*?\);\(.*?\)m\(.*?\)(ansi esc)\\[0m" '<tspan fill="rgb($1,$2,$3)">$4</tspan>'
 }
 
-def "state set-color" [
-  --rgb: list<int>
-  --xterm: int
-  --sgb: int
-] {
-
-
+def "into list" [] {
+  each {||}
 }
 
-def create_tspan [] {
+def sgr-range [] {
+  [
+    ...(30..37 | into list)
+    ...(90..97 | into list)
+    ...(40..47 | into list)
+    ...(100..107 | into list)
+  ]
+}
+
+def sgr-color [idx:int] {
+  let rgb = [
+    # Standard (Start at 30 for foreground, 40 for background)
+    [0, 0, 0]         # Black
+    [205, 0, 0]       # Red
+    [0, 205, 0]       # Green
+    [205, 205, 0]     # Yellow
+    [0, 0, 238]       # Blue
+    [205, 0, 205]     # Magenta
+    [0, 205, 205]     # Cyan
+    [229, 229, 229]   # White
+    # Bright Colors (Standrd index + 60)
+    [127, 127, 127]   # Bright Black (Gray)
+    [255, 0, 0]       # Bright Red
+    [0, 255, 0]       # Bright Green
+    [255, 255, 0]     # Bright Yellow
+    [92, 92, 255]     # Bright Blue
+    [255, 0, 255]     # Bright Magenta
+    [0, 255, 255]     # Bright Cyan
+    [255, 255, 255]    # Bright White
+  ]
+
+  match $idx {
+    $std_fg if $std_fg in 30..37 => {
+      text_color: ($rgb | get ($std_fg - 30))
+    }
+    $bright_fg if $bright_fg in 90..97 => {
+      text_color: ($rgb | get ($bright_fg - 82))
+    }
+    $std_bg if $std_bg in 40..47 => {
+      text_color: ($rgb | get ($std_bg - 40))
+    }
+    $bright_bg if $bright_bg in 100..107 => {
+      text_color: ($rgb | get ($bright_bg - 92))
+    }
+  }
+}
+
+# Returns a state record where the color is set to foreground
+# or background RGB value
+def set-color [color, --background, --color-type: string] {
+  let attr = match $background {
+    true => "text_background"
+    false => "text_color"
+  }
+  
+  match $color_type {
+    sgb => {
+
+    }
+
+    xterm => {
+
+    }
+
+    _ => {
+      match $color {
+        [ $r $g $b ] => { $attr: $color }
+      }
+    }
+  }
+}
+
+def create-tspan [] {
   let state = $in | close_spans
 
   let fill = match $state.text_color {
@@ -345,6 +417,7 @@ export def process_line_tokens [preexisting_state = {}] {
           # ANSI Reset
           [ 0 ] => {
             $state
+            # Close a tspan if open
             | close_spans
             # Reset everything to defaults except the html
             | merge ($default_state | reject html)
@@ -352,21 +425,49 @@ export def process_line_tokens [preexisting_state = {}] {
 
           # Set color via RGB
           [ 38 2 $r $g $b ] => {
+            set-color [ $r $g $b ]
+          }
+
+          # Set a background color via RGB
+          # TODO
+          [ 48 2 $r $g $b ] => {
             {
-              text_color: [$r, $g, $b]
+
             }
           }
           
-          # attribute alone
+          # Attribute alone
           [ $attr ] if ($attr in 1..9) => {
             attribute_state $attr
           }
 
-          # attribute followed by an RGB color
-          [ $attr $r $g $b ] if ($attr in 1..9) => {
+          # Attribute + SGR color
+          [ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-range)) => {
             (attribute_state $attr)
-            # TODO - Merge color
+            | merge (sgr-color $sgr_color)
           }
+
+          # SGR color
+          [ $sgr_color ] if ($sgr_color in (sgr-range)) => {
+            sgr-color $sgr_color
+          }
+
+          # Attribute followed by an RGB color
+          [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
+            (attribute_state $attr)
+            | merge (set-color [$r, $g, $b])
+          }
+
+          # Default foreground
+          [ 39 ] => {
+            { text_color: null }
+          }
+
+          # Default background
+          [ 49 ] => {
+            { text_background: null }
+          }
+
           # Otherwise, no state change for
           # unimplemented attributes
           _ => {
@@ -395,7 +496,7 @@ export def process_line_tokens [preexisting_state = {}] {
           # the new tspan from the attributes
           # and merge the updated HTML in
           'ansi' => { 
-            $state | merge $new_state | create_tspan 
+            $state | merge $new_state | create-tspan 
           }
           # 'ansi' => { $state | merge $new_state }
 
@@ -432,4 +533,6 @@ export def "to svg" [] {
 
   ((preface) + $first_line + $remaining + (close))
   | to text
+
+  # TODO: Calculate height
 }
