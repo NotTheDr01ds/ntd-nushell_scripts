@@ -227,14 +227,17 @@ export def "encode html-entities" []: [string -> string] {
 def svg-boilerplate [
   --width (-w): int
   --height(-h): int
-  --fg-color (-f): list
-  --bg-color (-b) = [ 0, 0, 0 ]
+  --fg-color (-f): string
+  --bg-color (-b): string
+  --line-height: int
+  --font-size: int
 ] {
+
   {
     tag: "svg"
     attributes: {
-      width: "800"
-      height: "800"
+      width: $"($width)"
+      height: $"($height)"
       xmlns: "http://www.w3.org/2000/svg"
     }
     content: [
@@ -243,7 +246,7 @@ def svg-boilerplate [
         attributes: {
           width: "100%"
           height: "100%"
-          fill: $"rgb\(($bg_color.0),($bg_color.1),($bg_color.2)\)"
+          fill: $"($bg_color)"
         }
 
       }
@@ -251,10 +254,10 @@ def svg-boilerplate [
         tag: "text"
         attributes: {
           x: "10"
-          y: "40"
+          y: "20"
           font-family: "monospace"
-          font-size: "14"
-          fill: "black"
+          font-size: $"($font_size)"
+          fill: $"($fg_color)"
           'xml:space': "preserve"
         }
       }
@@ -583,7 +586,14 @@ export def process_line_tokens [preexisting_state = {}] {
   $line_state
 }
 
-export def "to svg" [] {
+export def "to svg" [
+  --width (-w): int = 800
+  --height(-h): int
+  --fg-color (-f): string       # Foreground color, using "#rrggbb" values
+  --bg-color (-b): string      # Background color, using #rrggbb" values
+  --line-height: int = 16
+  --font-size: int = 14
+] {
   # Warning: Don't use $in here - It eats the metadata and won't
   # properly handle lscolors.  Because we can't collect $in, 
   # this assignment *must* be the first line in the command
@@ -595,7 +605,17 @@ export def "to svg" [] {
     | each { process_line_tokens }
   )
 
-  let line_height = 16
+  let fg_color = (
+    $fg_color
+    | default $env.config?.color_config?.foreground?
+    | default "#a5a2a2"
+  )
+  let bg_color = (
+    $bg_color
+    | default $env.config?.color_config?.background?
+    | default "#090300"
+  )
+
 
   let xml_tspans = (
     $line_state
@@ -620,9 +640,27 @@ export def "to svg" [] {
       }
   )
 
+  let num_lines = ($xml_tspans | length)
+  let height = (
+    $height
+    | default ($num_lines * $line_height + 20)
+  )
+
+
+  let svg_boilerplate = (
+    svg-boilerplate
+      --width $width
+      --height $height
+      --fg-color $fg_color
+      --bg-color $bg_color
+      --line-height $line_height
+      --font-size $font_size
+  )
+
+
   #return (svg-text-wrapper)
   return (
-    svg-boilerplate
+    $svg_boilerplate
     | upsert content.1.content $xml_tspans
     | to xml
   )
