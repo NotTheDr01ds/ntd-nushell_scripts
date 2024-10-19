@@ -224,11 +224,11 @@ export def "encode html-entities" []: [string -> string] {
     | str replace -r '(?ms)<s>(.*)</s>' '$1'
 }
 
-def svg-text-wrapper [
+def svg-boilerplate [
   --width (-w): int
   --height(-h): int
   --fg-color (-f): list
-  --bg-color (-b): list
+  --bg-color (-b) = [ 0, 0, 0 ]
 ] {
   {
     tag: "svg"
@@ -238,6 +238,15 @@ def svg-text-wrapper [
       xmlns: "http://www.w3.org/2000/svg"
     }
     content: [
+      {
+        tag: "rect"
+        attributes: {
+          width: "100%"
+          height: "100%"
+          fill: $"rgb\(($bg_color.0),($bg_color.1),($bg_color.2)\)"
+        }
+
+      }
       {
         tag: "text"
         attributes: {
@@ -298,24 +307,6 @@ def basic-colors [] {
   ]
 }
 
-def sgr-color [idx:int] {
-
-  match $idx {
-    $std_fg if $std_fg in 30..37 => {
-      text_color: ((basic-colors) | get ($std_fg - 30))
-    }
-    $bright_fg if $bright_fg in 90..97 => {
-      text_color: ((basic-colors) | get ($bright_fg - 82))
-    }
-    $std_bg if $std_bg in 40..47 => {
-      text_color: ((basic-colors) | get ($std_bg - 40))
-    }
-    $bright_bg if $bright_bg in 100..107 => {
-      text_color: ((basic-colors) | get ($bright_bg - 92))
-    }
-  }
-}
-
 # Returns a state record where the color is set to foreground
 # or background RGB value
 def set-color [color, --background, --color-type: string] {
@@ -325,19 +316,19 @@ def set-color [color, --background, --color-type: string] {
   }
   
   match $color_type {
-    sgb => {
+    sgr => {
       match $color {
         $std_fg if $std_fg in 30..37 => {
-          $attr: ((basic-colors) | get ($std_fg - 30))
+          text_color: ((basic-colors) | get ($std_fg - 30))
         }
         $bright_fg if $bright_fg in 90..97 => {
-          $attr: ((basic-colors) | get ($bright_fg - 82))
+          text_color: ((basic-colors) | get ($bright_fg - 82))
         }
         $std_bg if $std_bg in 40..47 => {
-          $attr: ((basic-colors) | get ($std_bg - 40))
+          text_background: ((basic-colors) | get ($std_bg - 40))
         }
         $bright_bg if $bright_bg in 100..107 => {
-          $attr: ((basic-colors) | get ($bright_bg - 92))
+          text_background: ((basic-colors) | get ($bright_bg - 92))
         }
       }
     }
@@ -497,10 +488,12 @@ export def process_line_tokens [preexisting_state = {}] {
 
   # Reduce tokens to a state.
   # Each token results in a new state.
-  # New state is merged into cumultative state.
-  $tokens | reduce -f $default_state {|token,state|
+  # Changes are merged into cumultative state.
+  let line_state = ($tokens | reduce -f $default_state {|token,state|
     $state | merge (
       match $token.type {
+        # ANSI escapes just change the state of the 
+        # attributes needed for the tspan
         'ansi' => {
           match $token.content {
             # ANSI Reset
@@ -530,13 +523,13 @@ export def process_line_tokens [preexisting_state = {}] {
             # Attribute + SGR color
             [ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-range)) => {
               (attribute-state $attr)
-              | merge (sgr-color $sgr_color)
+              | merge (set-color --color-type sgr $sgr_color)
             }
 
             # SGR color
             [ $sgr_color ] if ($sgr_color in (sgr-range)) => {
-              sgr-color $sgr_color
-            }
+              set-color --color-type sgr $sgr_color
+            } 
 
             # Attribute followed by an RGB color
             [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
@@ -575,6 +568,9 @@ export def process_line_tokens [preexisting_state = {}] {
           }
         }
 
+        # When we find a text token, we
+        # create a new tspan based on the
+        # ANSI attributes in the current state
         'text' => {
           {
             tspans: ($state.tspans ++ ($state | create-tspan $token.content))
@@ -582,19 +578,16 @@ export def process_line_tokens [preexisting_state = {}] {
         }
       }
     )
-  }
+  })
 
-  # Right now, returning HTML, but we
-  # need to return the full state in case
-  # it crosses to the next line
-  #$line_state | close_spans | get html
+  $line_state
 }
 
 export def "to svg" [] {
   # Warning: Don't use $in here - It eats the metadata and won't
   # properly handle lscolors.  Because we can't collect $in, 
   # this assignment *must* be the first line in the command
-  let tspans_content = (
+  let line_state = (
     table -e
     | lines
     #| each { tee { table -e | encode utf-8 | print $in }}
@@ -605,10 +598,10 @@ export def "to svg" [] {
   let line_height = 16
 
   let xml_tspans = (
-    $tspans_content
+    $line_state
     | enumerate | flatten
-    | each {|span|
-        let dy = match $span.index {
+    | each {|line|
+        let dy = match $line.index {
           0 => "0"
           _ => ($line_height | into string)
         }
@@ -621,7 +614,7 @@ export def "to svg" [] {
             dy: $dy
           }
           content: [
-            ...$span.tspans
+            ...$line.tspans
           ]
         }
       }
@@ -629,32 +622,8 @@ export def "to svg" [] {
 
   #return (svg-text-wrapper)
   return (
-    svg-text-wrapper
-    | upsert content.0.content $xml_tspans
+    svg-boilerplate
+    | upsert content.1.content $xml_tspans
     | to xml
   )
-
-  return $xml_tspans
-
-
-  let input = $tspans_content
-
-  let first_line = $'<tspan x="10" dy="00">($input.0)</tspan>'
-
-  let remaining = (
-    $input
-    | skip
-    | reduce -f '' {|it,acc|
-        $acc ++ $'<tspan x="10" dy="18">($it)</tspan>'
-    }
-  ) | default ""
-
- # ((preface) + $first_line + $remaining + (close))
- # | to text
-
-   svg-text-wrapper | to xml
-
-  
-
-  # TODO: Calculate height
 }
