@@ -224,16 +224,33 @@ export def "encode html-entities" []: [string -> string] {
     | str replace -r '(?ms)<s>(.*)</s>' '$1'
 }
 
-def preface [
+def svg-text-wrapper [
   --width (-w): int
   --height(-h): int
   --fg-color (-f): list
   --bg-color (-b): list
 ] {
-  $'<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg"><text x="10" y="40" font-family="monospace" font-size="14" fill="black" xml:space="preserve">'
-}
-def close [] {
-  $'</text></svg>'
+  {
+    tag: "svg"
+    attributes: {
+      width: "800"
+      height: "800"
+      xmlns: "http://www.w3.org/2000/svg"
+    }
+    content: [
+      {
+        tag: "text"
+        attributes: {
+          x: "10"
+          y: "40"
+          font-family: "monospace"
+          font-size: "14"
+          fill: "black"
+          'xml:space': "preserve"
+        }
+      }
+    ]
+  }
 }
 
 def close_spans [] {
@@ -243,11 +260,6 @@ def close_spans [] {
     html: ($state.html + $close_spans)
     span_level: 0
   }
-}
-
-# Original main magic to the PoC
-def parse_rgb_color [] {
-  str replace --all --regex $"(ansi esc)\\[38;2;\(.*?\);\(.*?\);\(.*?\)m\(.*?\)(ansi esc)\\[0m" '<tspan fill="rgb($1,$2,$3)">$4</tspan>'
 }
 
 def "into list" [] {
@@ -365,15 +377,17 @@ def set-color [color, --background, --color-type: string] {
   }
 }
 
-def create-tspan [] {
-  let state = $in | close_spans
+def create-tspan [text] {
+  let state = $in
 
   let fill = match $state.text_color {
-    [ $r, $g, $b ] => $"fill=\"rgb\(($r),($g),($b)\)\""
+    [ $r, $g, $b ] => {
+      $"rgb\(($r),($g),($b)\)"
+    }
   }
 
   let font_weight = match $state.bold {
-    true => 'font-weight="bold"'
+    true => 'bold'
   }
 
   let text_decoration = (
@@ -385,37 +399,71 @@ def create-tspan [] {
           (if $state.strikethrough { "line-through" } else { "" })
         ]
         | str join ' '
-        | $'text-decoration="($in | str trim)"'
+        | $'($in | str trim)'
       }
     }
   )
 
-  let attr_set = [ $fill, $font_weight, $text_decoration ]
-  | where $it != ''
-  | where $it != null
-  | str join ' '
+  let font_style = match $state.italics {
+    true => 'italic'
+  }
 
-  # Return the state with the updated HTML
-  $state
-  | merge (
-      match $attr_set {
-        '' => {{}}
-        _ => {
-          html: ($state.html + $'<tspan ($attr_set)>')
-          span_level: ($state.span_level + 1)
+  let opacity = match $state.dimmed {
+    true => '0.5'
+  }
+
+  let opacity = match $state.hidden {
+    true => '0'
+  }
+
+  let attributes = {
+    fill: $fill
+    font-weight: $font_weight
+    text-decoration: $text_decoration
+    font-style: $font_style
+    opacity: $opacity
+  }
+  | transpose attr value
+  | where value != null and value != ""
+  | transpose -dr 
+  | if $in == [] {{}} else $in
+
+  # Add an animate tag when blink is set.
+  let content = ([ $text ] ++ (
+    match $state.blink {
+      true => {
+        tag: "animate"
+        attributes: {
+          attributeName: "opacity"
+          values: "1;0.33;1"
+          dur: "1.5s"
+          repeatCount: "indefinite"
         }
       }
-  )
+      false => {
+        []
+      }
+    }
+  ))
+
+  {
+    tag: 'tspan'
+    attributes: $attributes
+    content: $content
+  } 
 }
 
-def attribute_state [attr_id] {
+def attribute-state [attr_id] {
   match $attr_id {
     1 => { bold: true }
     2 => { dimmed: true }
     3 => { italics: true }
     4 => { underline: true }
+    5 => { blink: true }
+    7 => { reverse: true }
+    8 => { hidden: true }
     9 => { strikethrough: true }
-    _ => {}
+    _ => {{}}
   } 
 }
 
@@ -443,136 +491,153 @@ export def process_line_tokens [preexisting_state = {}] {
 
     html: ""
     background_html: ""
+    tspans: []
     span_level: 0
   }
 
   # Reduce tokens to a state.
   # Each token results in a new state.
   # New state is merged into cumultative state.
-  # State includes the current HTML text.
-  let line_state = ($tokens | reduce -f $default_state {|token,state|
-    let new_state = match $token.type {
-      'ansi' => {
-        match $token.content {
-          # ANSI Reset
-          [ 0 ] => {
-            $state
-            # Close a tspan if open
-            | close_spans
-            # Reset everything to defaults except the html
-            | merge ($default_state | reject html)
-          }
+  $tokens | reduce -f $default_state {|token,state|
+    $state | merge (
+      match $token.type {
+        'ansi' => {
+          match $token.content {
+            # ANSI Reset
+            [ 0 ] => {
+              # Reset everything to defaults except the html
+              $default_state | reject tspans
+            }
 
-          # Set color via RGB
-          [ 38 2 $r $g $b ] => {
-            set-color [ $r $g $b ]
-          }
+            # Set color via RGB
+            [ 38 2 $r $g $b ] => {
+              set-color [ $r $g $b ]
+            }
 
-          # Set a background color via RGB
-          # TODO
-          [ 48 2 $r $g $b ] => {
-            {
+            # Set a background color via RGB
+            # TODO
+            [ 48 2 $r $g $b ] => {
+              {
 
+              }
+            }
+            
+            # Attribute alone
+            [ $attr ] if ($attr in 1..9) => {
+              attribute-state $attr
+            }
+
+            # Attribute + SGR color
+            [ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-range)) => {
+              (attribute-state $attr)
+              | merge (sgr-color $sgr_color)
+            }
+
+            # SGR color
+            [ $sgr_color ] if ($sgr_color in (sgr-range)) => {
+              sgr-color $sgr_color
+            }
+
+            # Attribute followed by an RGB color
+            [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
+              (attribute-state $attr)
+              | merge (set-color [$r, $g, $b])
+            }
+
+            # xterm colors
+            [ 38 5 $xcolor ] => {
+              (set-color $xcolor --color-type xterm)
+            }
+
+            # Attr + xterm Color
+            [ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
+              (attribute-state $attr)
+              | merge (set-color $xcolor --color-type xterm)
+            }
+
+            # Default foreground
+            [ 39 ] => {
+              { text_color: null }
+            }
+
+            # Default background
+            [ 49 ] => {
+              { text_background: null }
+            }
+
+            # Otherwise, no state change for
+            # unimplemented attributes
+            _ => {
+              print ("No match found for: \n" + ($token.content | table -e ))
+              {
+              }
             }
           }
-          
-          # Attribute alone
-          [ $attr ] if ($attr in 1..9) => {
-            attribute_state $attr
-          }
+        }
 
-          # Attribute + SGR color
-          [ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-range)) => {
-            (attribute_state $attr)
-            | merge (sgr-color $sgr_color)
-          }
-
-          # SGR color
-          [ $sgr_color ] if ($sgr_color in (sgr-range)) => {
-            sgr-color $sgr_color
-          }
-
-          # Attribute followed by an RGB color
-          [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
-            (attribute_state $attr)
-            | merge (set-color [$r, $g, $b])
-          }
-
-          # xterm colors
-          [ 38 5 $xcolor ] => {
-            (set-color $xcolor --color-type xterm)
-          }
-
-          # Attr + xterm Color
-          [ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
-            (attribute_state $attr)
-            | merge (set-color $xcolor --color-type xterm)
-          }
-
-          # Default foreground
-          [ 39 ] => {
-            { text_color: null }
-          }
-
-          # Default background
-          [ 49 ] => {
-            { text_background: null }
-          }
-
-          # Otherwise, no state change for
-          # unimplemented attributes
-          _ => {
-            print ("No match found for: \n" + ($token.content | table -e ))
-            {
-            }
+        'text' => {
+          {
+            tspans: ($state.tspans ++ ($state | create-tspan $token.content))
           }
         }
       }
-      'text' => {
-        {
-          html: ($state.html + $token.content)
-        }
-      }
-    }
-
-    $state
-    | merge (
-        match $token.type {
-          # If it was a text token,
-          # then the state already has
-          # the updated HTML from above
-          'text' => $new_state
-
-          # Otherwise we need to calculate
-          # the new tspan from the attributes
-          # and merge the updated HTML in
-          'ansi' => { 
-            $state | merge $new_state | create-tspan 
-          }
-          # 'ansi' => { $state | merge $new_state }
-
-          _ => {{}}
-        }
-      )
-    }
-  )
+    )
+  }
 
   # Right now, returning HTML, but we
   # need to return the full state in case
   # it crosses to the next line
-  $line_state | close_spans | get html
+  #$line_state | close_spans | get html
 }
 
 export def "to svg" [] {
   # Warning: Don't use $in here - It eats the metadata and won't
-  # properly handle lscolors
-  let input = (
+  # properly handle lscolors.  Because we can't collect $in, 
+  # this assignment *must* be the first line in the command
+  let tspans_content = (
     table -e
     | lines
     #| each { tee { table -e | encode utf-8 | print $in }}
     | each { encode html-entities }
     | each { process_line_tokens }
   )
+
+  let line_height = 16
+
+  let xml_tspans = (
+    $tspans_content
+    | enumerate | flatten
+    | each {|span|
+        let dy = match $span.index {
+          0 => "0"
+          _ => ($line_height | into string)
+        }
+
+        #print ($span | table -e)
+        {
+          tag: 'tspan'
+          attributes: {
+            x: "10"
+            dy: $dy
+          }
+          content: [
+            ...$span.tspans
+          ]
+        }
+      }
+  )
+
+  #return (svg-text-wrapper)
+  return (
+    svg-text-wrapper
+    | upsert content.0.content $xml_tspans
+    | to xml
+  )
+
+  return $xml_tspans
+
+
+  let input = $tspans_content
 
   let first_line = $'<tspan x="10" dy="00">($input.0)</tspan>'
 
@@ -584,8 +649,12 @@ export def "to svg" [] {
     }
   ) | default ""
 
-  ((preface) + $first_line + $remaining + (close))
-  | to text
+ # ((preface) + $first_line + $remaining + (close))
+ # | to text
+
+   svg-text-wrapper | to xml
+
+  
 
   # TODO: Calculate height
 }
