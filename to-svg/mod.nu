@@ -510,7 +510,7 @@ export def "to svg" [
     | each { encode html-entities }
     | each { process_line_tokens }
   )
-
+  
   let fg_color = (
     $fg_color
     | default $env.config?.color_config?.foreground?
@@ -522,7 +522,6 @@ export def "to svg" [
     | default "#090300"
   )
 
-
   let xml_tspans = (
     $line_state
     | enumerate | flatten
@@ -532,7 +531,16 @@ export def "to svg" [
           _ => ($line_height | into string)
         }
 
-        #print ($span | table -e)
+        # If the line is empty, insert a zero-width
+        # space so that the tspan doesn't get collapsed
+        let tspans = match $line.tspans.content {
+          [[ "" ]] => {
+            #$line.tspans | upsert content { [ '&#8203;' ] }
+            $line.tspans | upsert content { [ ("<tspan>&#8203;</tspan>" | from xml) ] }
+          }
+          _ => $line.tspans
+        }
+
         {
           tag: 'tspan'
           attributes: {
@@ -540,7 +548,7 @@ export def "to svg" [
             dy: $dy
           }
           content: [
-            ...$line.tspans
+            ...$tspans
           ]
         }
       }
