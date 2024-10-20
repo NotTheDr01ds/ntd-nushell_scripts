@@ -1,5 +1,20 @@
 use std/util repeat
 
+const default_state = {
+  text-color: null
+  text-background: null
+  bold: false
+  italics: false
+  underline: false
+  strikethrough: false
+  reverse: false
+  dimmed: false
+  blink: false
+  hidden: false
+
+  tspans: []
+}
+
 # Temporarily exported for testing
 # Remove when done
 def tokenize_line [] {
@@ -171,25 +186,23 @@ def svg-boilerplate [
   }
 }
 
-def close_spans [] {
-  let state = $in
-  let close_spans = ('</tspan>' | repeat $state.span_level | str join '')
-  $state | merge {
-    html: ($state.html + $close_spans)
-    span_level: 0
-  }
-}
-
 def "into list" [] {
   each {||}
 }
 
-def sgr-range [] {
+def sgr-ranges [] {
   [
     ...(30..37 | into list)
     ...(90..97 | into list)
     ...(40..47 | into list)
     ...(100..107 | into list)
+  ]
+}
+
+def attribute-ranges [] {
+  [
+    ...(1..9 | into list)
+    ...(21..29 | into list) # Reset individual attributes
   ]
 }
 
@@ -220,24 +233,24 @@ def basic-colors [] {
 # or background RGB value
 def set-color [color, --background, --color-type: string] {
   let attr = match $background {
-    true => "text_background"
-    false => "text_color"
+    true => "text-background"
+    false => "text-color"
   }
   
   match $color_type {
     sgr => {
       match $color {
         $std_fg if $std_fg in 30..37 => {
-          text_color: ((basic-colors) | get ($std_fg - 30))
+          text-color: ((basic-colors) | get ($std_fg - 30))
         }
         $bright_fg if $bright_fg in 90..97 => {
-          text_color: ((basic-colors) | get ($bright_fg - 82))
+          text-color: ((basic-colors) | get ($bright_fg - 82))
         }
         $std_bg if $std_bg in 40..47 => {
-          text_background: ((basic-colors) | get ($std_bg - 40))
+          text-background: ((basic-colors) | get ($std_bg - 40))
         }
         $bright_bg if $bright_bg in 100..107 => {
-          text_background: ((basic-colors) | get ($bright_bg - 92))
+          text-background: ((basic-colors) | get ($bright_bg - 92))
         }
       }
     }
@@ -280,7 +293,7 @@ def set-color [color, --background, --color-type: string] {
 def create-tspan [text] {
   let state = $in
 
-  let fill = match $state.text_color {
+  let fill = match $state.text-color {
     [ $r, $g, $b ] => {
       $"rgb\(($r),($g),($b)\)"
     }
@@ -346,11 +359,12 @@ def create-tspan [text] {
     }
   ))
 
-  {
+  let res = {
     tag: 'tspan'
     attributes: $attributes
     content: $content
   } 
+  $res
 }
 
 def attribute-state [attr_id] {
@@ -367,114 +381,145 @@ def attribute-state [attr_id] {
   } 
 }
 
+# Input: A list of ANSI formatting
+# codes from a token.content
+# Output: Attribute state
+def process-attributes [attrs: list] {
+  let state = ($in | default {})
+  mut remaining = []
+
+  # Each match arm returns a subset of a state
+  # that is *merged* with the current state to
+  # produce a new state
+  # "subset" example: { text_color: [ 0, 0, 0 ]}
+  # 
+  # In each match arm, we need to capture codes that
+  # remain after the match so that they can be 
+  # recursed
+  let new_state = ($state | merge (
+    match $attrs {
+      # ANSI Reset
+      [ 0 ..$rest ] => {
+        # Reset everything to defaults except for the tspan collector
+        $remaining = $rest
+        $default_state | reject tspans
+      }
+
+      # Set color via RGB
+      [ 38 2 $r $g $b ..$rest ] => {
+        $remaining = $rest
+        set-color [ $r $g $b ]
+      }
+
+      # Set a background color via RGB
+      # TODO
+      [ 48 2 $r $g $b ..$rest ] => {
+        $remaining = $rest
+        {}
+      }
+      
+      # Attribute alone
+      [$attr ..$rest] if ($attr in (attribute-ranges)) => {
+        $remaining = $rest
+        attribute-state $attr
+      }
+
+      # Attribute + SGR color
+      # Commenting out, since this will be handled via recursion instead
+      #[ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-ranges)) => {
+      #  (attribute-state $attr)
+      #  | merge (set-color --color-type sgr $sgr_color)
+      #}
+
+      # SGR color
+      [ $sgr_color ..$rest] if ($sgr_color in (sgr-ranges)) => {
+        $remaining = $rest
+        set-color --color-type sgr $sgr_color
+      } 
+
+      # Commented since this should be recursed now
+      # Attribute followed by an RGB color
+      #[ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
+        #(attribute-state $attr)
+        #| merge (set-color [$r, $g, $b])
+      #}
+
+      # xterm colors
+      [ 38 5 $xcolor  ..$rest ] => {
+        $remaining = $rest
+        (set-color $xcolor --color-type xterm)
+      }
+
+      # Recursed now
+      # Attr + xterm Color
+      #[ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
+        #(attribute-state $attr)
+        #| merge (set-color $xcolor --color-type xterm)
+      #}
+
+      # Default foreground
+      [ 39 ..$rest] => {
+        $remaining = $rest
+        { text-color: null }
+      }
+
+      # Default background
+      [ 49 ..$rest ] => {
+        $remaining = $rest
+        { text-background: null }
+      }
+
+      # Otherwise, no state change for
+      # unimplemented attributes
+      # Note: We need to capture these so that
+      # we can at least recurse the next set if
+      # present
+      [ $unknown ..$rest ] => {
+        $remaining = $rest
+        print ("No match found for: \n" + ($unknown | table -e ))
+
+        {
+        }
+      }
+      _ => {
+        print "ERROR"
+        error make --unspanned { msg: "Should never fail a match"}
+      }
+    }
+  ))
+
+  # Return
+  match $remaining {
+    # Return the new state if there's nothing left to process
+    null => $new_state
+    # Or merge the recursion otherwise
+    $rest => {
+      $new_state | process-attributes $rest
+    }
+    _ => { print "Error - Fell through" }
+  }
+}
+
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
 def process_line_tokens [preexisting_state = {}] {
-
   let tokens = ($in | tokenize_line)
 
   # Initial state
   # Currently new state for each line
   # But needs to preserve existing state
   # from previous line(s)
-  let default_state = {
-    text_color: null
-    text_background: null
-    bold: false
-    italics: false
-    underline: false
-    strikethrough: false
-    reverse: false
-    dimmed: false
-    blink: false
-    hidden: false
-
-    html: ""
-    background_html: ""
-    tspans: []
-    span_level: 0
-  }
 
   # Reduce tokens to a state.
   # Each token results in a new state.
   # Changes are merged into cumultative state.
-  let line_state = ($tokens | reduce -f $default_state {|token,state|
+  $tokens | reduce -f $default_state {|token,state|
     $state | merge (
       match $token.type {
-        # ANSI escapes just change the state of the 
+        # ANSI formatting escapes just change the state of the 
         # attributes needed for the tspan
         'ansi' => {
-          match $token.content {
-            # ANSI Reset
-            [ 0 ] => {
-              # Reset everything to defaults except the html
-              $default_state | reject tspans
-            }
-
-            # Set color via RGB
-            [ 38 2 $r $g $b ] => {
-              set-color [ $r $g $b ]
-            }
-
-            # Set a background color via RGB
-            # TODO
-            [ 48 2 $r $g $b ] => {
-              {
-
-              }
-            }
-            
-            # Attribute alone
-            [ $attr ] if ($attr in 1..9) => {
-              attribute-state $attr
-            }
-
-            # Attribute + SGR color
-            [ $attr $sgr_color ] if ($attr in 1..9) and ($sgr_color in (sgr-range)) => {
-              (attribute-state $attr)
-              | merge (set-color --color-type sgr $sgr_color)
-            }
-
-            # SGR color
-            [ $sgr_color ] if ($sgr_color in (sgr-range)) => {
-              set-color --color-type sgr $sgr_color
-            } 
-
-            # Attribute followed by an RGB color
-            [ $attr 38 2 $r $g $b ] if ($attr in 1..9) => {
-              (attribute-state $attr)
-              | merge (set-color [$r, $g, $b])
-            }
-
-            # xterm colors
-            [ 38 5 $xcolor ] => {
-              (set-color $xcolor --color-type xterm)
-            }
-
-            # Attr + xterm Color
-            [ $attr 38 5 $xcolor ] if ($attr in 1..9) => {
-              (attribute-state $attr)
-              | merge (set-color $xcolor --color-type xterm)
-            }
-
-            # Default foreground
-            [ 39 ] => {
-              { text_color: null }
-            }
-
-            # Default background
-            [ 49 ] => {
-              { text_background: null }
-            }
-
-            # Otherwise, no state change for
-            # unimplemented attributes
-            _ => {
-              print ("No match found for: \n" + ($token.content | table -e ))
-              {
-              }
-            }
-          }
+          process-attributes $token.content
         }
 
         # When we find a text token, we
@@ -487,9 +532,7 @@ def process_line_tokens [preexisting_state = {}] {
         }
       }
     )
-  })
-
-  $line_state
+  }
 }
 
 export def "to svg" [
@@ -533,6 +576,7 @@ export def "to svg" [
 
         # If the line is empty, insert a zero-width
         # space so that the tspan doesn't get collapsed
+        # by `dy`
         let tspans = match $line.tspans.content {
           [[ "" ]] => {
             #$line.tspans | upsert content { [ '&#8203;' ] }
@@ -570,12 +614,8 @@ export def "to svg" [
       --line-height $line_height
       --font-size $font_size
   )
-
-
-  #return (svg-text-wrapper)
-  return (
-    $svg_boilerplate
-    | upsert content.1.content $xml_tspans
-    | to xml
-  )
+  
+  $svg_boilerplate
+  | upsert content.1.content $xml_tspans
+  | to xml
 }
