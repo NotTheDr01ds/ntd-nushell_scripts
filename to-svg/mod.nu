@@ -140,8 +140,8 @@ def "str indices-of" [pattern:string] string->list<int> {
 }
 
 def svg-boilerplate [
-  --width (-w): int
-  --height(-h): int
+  --width (-w): string
+  --height(-h): string
   --fg-color (-f): string
   --bg-color (-b): string
   --line-height: int
@@ -156,6 +156,14 @@ def svg-boilerplate [
       xmlns: "http://www.w3.org/2000/svg"
     }
     content: [
+      {
+        tag: style
+        content: [ "
+tspan {
+  white-space: pre;
+}
+" ]
+      }
       {
         tag: "rect"
         attributes: {
@@ -173,7 +181,7 @@ def svg-boilerplate [
           font-family: "monospace"
           font-size: $"($font_size)"
           fill: $"($fg_color)"
-          'xml:space': "preserve"
+          #'xml:space': "preserve"
         }
       }
     ]
@@ -538,8 +546,8 @@ def process_line_tokens [preexisting_state = {}] {
 }
 
 export def "to svg" [
-  --width (-w): int = 800
-  --height(-h): int
+  --width (-w): string = "800"
+  --height(-h): string
   --fg-color (-f): string       # Foreground color, using "#rrggbb" values
   --bg-color (-b): string      # Background color, using #rrggbb" values
   --line-height: int = 16
@@ -617,6 +625,6 @@ export def "to svg" [
   )
   
   $svg_boilerplate
-  | upsert content.1.content $xml_tspans
+  | upsert content.2.content $xml_tspans
   | to xml
 }
