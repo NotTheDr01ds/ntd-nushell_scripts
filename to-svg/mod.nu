@@ -139,12 +139,6 @@ def "str indices-of" [pattern:string] string->list<int> {
   }
 }
 
-def "encode html-entities" []: [string -> string] {
-    { tag: "s", content: [$in] }
-    | to xml
-    | str replace -r '(?ms)<s>(.*)</s>' '$1'
-}
-
 def svg-boilerplate [
   --width (-w): int
   --height(-h): int
@@ -377,6 +371,14 @@ def attribute-state [attr_id] {
     7 => { reverse: true }
     8 => { hidden: true }
     9 => { strikethrough: true }
+    21 => { bold: false }
+    22 => { dimmed: false }
+    23 => { italics: false }
+    24 => { underline: false }
+    25 => { blink: false }
+    27 => { reverse: false }
+    28 => { hidden: false }
+    29 => { strikethrough: false }
     _ => {{}}
   } 
 }
@@ -550,7 +552,6 @@ export def "to svg" [
     table -e
     | lines
     #| each { tee { table -e | encode utf-8 | print $in }}
-    | each { encode html-entities }
     | each { process_line_tokens }
   )
   
