@@ -12,6 +12,7 @@ const default_state = {
   blink: false
   hidden: false
 
+  background_indices: []
   tspans: []
 }
 
@@ -512,8 +513,9 @@ def process-attributes [attrs: list] {
 
 # existing_state: color or attributes from previous
 # lines that have not yet been reset.
-def process_line_tokens [preexisting_state = {}] {
+def process_line_tokens [preexisting_state?] {
   let tokens = ($in | tokenize_line)
+  let starting_line_state = ($preexisting_state | default $default_state)
 
   # Initial state
   # Currently new state for each line
@@ -523,7 +525,7 @@ def process_line_tokens [preexisting_state = {}] {
   # Reduce tokens to a state.
   # Each token results in a new state.
   # Changes are merged into cumultative state.
-  $tokens | reduce -f $default_state {|token,state|
+  $tokens | reduce -f $starting_line_state {|token,state|
     $state | merge (
       match $token.type {
         # ANSI formatting escapes just change the state of the 
@@ -556,13 +558,24 @@ export def "to svg" [
   # Warning: Don't use $in here - It eats the metadata and won't
   # properly handle lscolors.  Because we can't collect $in, 
   # this assignment *must* be the first line in the command
-  let line_state = (
+  let line_states = (
     table -e
     | lines
     #| each { tee { table -e | encode utf-8 | print $in }}
-    | each { process_line_tokens }
+    #| each { process_line_tokens }
+    | reduce -f [] {|line,line_states|
+        let previous_line_state = match ($line_states | length) {
+          # First line gets default state
+          0 => $default_state
+          # Subsequent lines take on state of the previous line
+          # minus the content (tspans)
+          _ => ($line_states | last | merge { tspans: [] })
+        }
+        let line_state = ($line | process_line_tokens $previous_line_state)
+        $line_states ++ $line_state
+      }
   )
-  
+
   let fg_color = (
     $fg_color
     | default $env.config?.color_config?.foreground?
@@ -575,7 +588,7 @@ export def "to svg" [
   )
 
   let xml_tspans = (
-    $line_state
+    $line_states
     | enumerate | flatten
     | each {|line|
         let dy = match $line.index {
