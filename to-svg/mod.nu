@@ -1,4 +1,5 @@
 use std/util repeat
+use std/xml *
 
 const default_state = {
   text-color: null
@@ -12,7 +13,7 @@ const default_state = {
   blink: false
   hidden: false
 
-  background_indices: []
+  background-tspans: []
   tspans: []
 }
 
@@ -302,6 +303,13 @@ def create-tspan [text] {
     }
   }
 
+  let background = match $state.text-background {
+    [ $r, $g, $b ] => {
+      $"rgb\(($r),($g),($b)\)"
+    }
+  }
+
+
   let font_weight = match $state.bold {
     true => 'bold'
   }
@@ -338,6 +346,7 @@ def create-tspan [text] {
     text-decoration: $text_decoration
     font-style: $font_style
     opacity: $opacity
+    background: $background
   }
   | transpose attr value
   | where value != null and value != ""
@@ -426,7 +435,10 @@ def process-attributes [attrs: list] {
       # TODO
       [ 48 2 $r $g $b ..$rest ] => {
         $remaining = $rest
-        {}
+        #let state_bg = ($state.background-indices? | default [])
+        #{ background-indices: ($state_bg ++ [ [ 0, 6, [ $r, $g, $b ]]])}
+        #{ background-indices: [ 5 ]}
+        set-color --background [ $r $g $b ]
       }
       
       # Attribute alone
@@ -561,6 +573,7 @@ export def "to svg" [
   let line_states = (
     table -e
     | lines
+    #  This can be a useful debugging statement, so leaving it commented
     #| each { tee { table -e | encode utf-8 | print $in }}
     #| each { process_line_tokens }
     | reduce -f [] {|line,line_states|
@@ -571,10 +584,45 @@ export def "to svg" [
           # minus the content (tspans)
           _ => ($line_states | last | merge { tspans: [] })
         }
+
         let line_state = ($line | process_line_tokens $previous_line_state)
-        $line_states ++ $line_state
+
+        let background_tspans = (
+          if "background" in ($line_state.tspans| flatten | columns) {
+            # For every tspan in the line, calculate the starting position
+            # and, if it has a background, add the full block characters to a 
+            # new line that will be placed behind the current line
+
+            $line_state.tspans | each {|foreground_tspan|
+              let span_length = ($foreground_tspan.content.0 | str length --grapheme-clusters)
+              if "background" in ($foreground_tspan.attributes| columns) {
+                let background_color = $foreground_tspan.attributes.background
+                {
+                  tag: tspan
+                  content: [('' | fill -c (char --unicode '2588') -w $span_length | str join '')]
+                  attributes: {
+                    fill: $background_color
+                  }
+                }
+              } else {
+                {
+                  tag: tspan
+                  content: [('' | fill -c (char --unicode '00A0') -w $span_length | str join '')]
+                  attributes: {} 
+                }
+              }
+            }
+          } else {
+            []
+          }
+        )
+
+        $line_states ++ ($line_state | merge { background-tspans: $background_tspans })
       }
   )
+
+  # This can be a useful debugging statement, so leaving it commented
+  #print ($line_states | select tspans background-tspans | table -e)
 
   let fg_color = (
     $fg_color
@@ -590,12 +638,7 @@ export def "to svg" [
   let xml_tspans = (
     $line_states
     | enumerate | flatten
-    | each {|line|
-        let dy = match $line.index {
-          0 => "0"
-          _ => ($line_height | into string)
-        }
-
+    | reduce -f [] {|line,lines|
         # If the line is empty, insert a zero-width
         # space so that the tspan doesn't get collapsed
         # by `dy`
@@ -607,20 +650,54 @@ export def "to svg" [
           _ => $line.tspans
         }
 
-        {
-          tag: 'tspan'
-          attributes: {
-            x: "10"
-            dy: $dy
+        let has_background = $line.background-tspans != []
+
+        # If we have a background, and this is the first line
+        # the position of the background is dy 0
+        # If it's any other line, the "cursor" is advanced by
+        # the line_height
+        let bg_dy = match $line.index {
+          0 => "0"
+          _ => ($line_height | into string)
+        }
+
+        # If we don't have a background, and this is the first line,
+        # the position of the main content is dy 0.
+        # If it's any other line number, and it does have a background,
+        # we don't advance the cursor (dy 0) so that we overprint the content
+        # on top of the background
+        let dy = match $line.index {
+          0 => "0"
+          _ => {if $has_background { "0" } else {($line_height | into string)}}
+        }
+
+        let bg_line = if $line.background-tspans != [] {
+          let bg_tspans = $line.background-tspans
+          {
+            tag: 'tspan'
+            attributes: { x: "10" dy: $bg_dy }
+            content: [ ...$bg_tspans ]
           }
-          content: [
-            ...$tspans
-          ]
+        } 
+
+        let line = {
+          tag: 'tspan'
+          attributes: { x: "10" dy: $dy }
+          content: [ ...$tspans ]
+        }
+
+        # If we have a background, add it, then add the
+        # main content after (over) it.
+        # Otherwise just add the main line
+        if $bg_line != null {
+          $lines ++ $bg_line ++ $line
+        } else {
+          $lines ++ $line
         }
       }
   )
 
-  let num_lines = ($xml_tspans | length)
+  let num_lines = ($line_states | length)
   let height = (
     $height
     | default ($num_lines * $line_height + 20)
