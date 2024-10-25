@@ -499,7 +499,7 @@ def process-attributes [attrs: list] {
       # present
       [ $unknown ..$rest ] => {
         $remaining = $rest
-        print ("No match found for: \n" + ($unknown | table -e ))
+        print ("No match found for: \n" + ($unknown | into string | table -e ))
 
         {
         }
