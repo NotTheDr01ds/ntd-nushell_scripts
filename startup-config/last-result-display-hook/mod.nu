@@ -39,15 +39,15 @@ export def main [] {{
     let last_result = (metadata access {|meta| do {} ($meta | kv set _meta_tmp) } | stream limit)
     let capturing = try { if (kv get LAST_RESULT | default true) { true } else { false } } catch { false }
     if $capturing {
-      kv get _3 | kv set _4
-      kv get _2 | kv set _3
-      kv get _1 | kv set _2
-      kv get _  | kv set _1
-      kv set _ $last_result
-      kv get _meta3 | kv set _meta4
-      kv get _meta2 | kv set _meta3
-      kv get _meta | kv set _meta2
-      kv get _meta_tmp | kv set _meta
+      try { kv get _3 | kv set _4 }
+      try { kv get _2 | kv set _3 }
+      try { kv get _1 | kv set _2 }
+      try { kv get _  | kv set _1 }
+      try { kv set _ $last_result }
+      try { kv get _meta3 | kv set _meta4 }
+      try { kv get _meta2 | kv set _meta3 }
+      try { kv get _meta | kv set _meta2 }
+      try { kv get _meta_tmp | kv set _meta }
     }
   }
 }}
