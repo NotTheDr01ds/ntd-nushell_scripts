@@ -1,0 +1,6 @@
+{
+  repo: NotTheDr01ds/ntd-nushell_scripts
+  package-name: 'last-result-display-hook'
+  sparse-options: [ '--no-cone', '--sparse-index', 'startup-config/last-result-display-hook/mod.nu' ]
+  module-root: 'startup-config'
+}
