@@ -1,0 +1,6 @@
+{
+  repo: NotTheDr01ds/ntd-nushell_scripts
+  package-name: 'theme-3024ntd'
+  sparse-options: [ '--no-cone', '--sparse-index', 'startup-config/theme-3024ntd' ]
+  module-root: 'startup-config'
+}
