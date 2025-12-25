@@ -1,0 +1,6 @@
+{
+  repo: NotTheDr01ds/ntd-nushell_scripts
+  package-name: 'ide-completions'
+  sparse-options: [ '--no-cone', '--sparse-index', 'startup-config/ide-completions/mod.nu' ]
+  module-root: 'startup-config'
+}
