@@ -76,3 +76,10 @@ export def default-display-hook [] {
     if (term size).columns >= 100 { table -e } else { table }
   }
 }
+
+export-env {
+  $env.config.hooks.display_output = {
+    do (main)
+    | do (default-display-hook)
+  }
+}
