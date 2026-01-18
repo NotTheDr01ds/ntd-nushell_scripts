@@ -8,46 +8,43 @@ const mime_to_lang = {
   text/markdown: markdown
 }
 
-def classify []: record -> record {
-  let md = $in
-  let head = try { view span $md.span.start $md.span.end }
-  match $md.content_type? {
-    null => {{}}
-    "application/x-nuscript" | "application/x-nuon" | "text/x-nushell" => { nu: true }
-    $mimetype if $mimetype in $mime_to_lang => { bat: ($mime_to_lang | get $mimetype) }
-    _ => {{}}
+export def content-type-display-hook [] {
+  {
+    metadata access {|meta|
+      match $meta.content_type? {
+        null => { }
+
+        "application/x-nuscript" | "application/x-nuon" | "text/x-nushell" => {
+          let tempfile = (mktemp -t)
+          $in | nu-highlight | save -f $tempfile
+          bat -pf $tempfile
+          rm $tempfile
+        }
+
+        $mimetype if $mimetype in $mime_to_lang => {
+          let tempfile = (mktemp -t)
+          $in | save -f $tempfile
+          bat -pf --language=($mime_to_lang | get $mimetype) $tempfile
+          rm $tempfile
+        }
+
+        _ => {}
+      }
+    }
   }
-  | insert head $head
-  | insert source $md.source?
 }
 
-export def main [] {
+export def ls-display-hook [] {
   {
-    metadata access {|meta| 
-      do {|class|
-        match $class {
-          { bat: $lang } => {
-            let tempfile = (mktemp -t)
-            $in | save -f $tempfile
-            bat -pf --language=($lang) $tempfile
-            rm $tempfile
-          }
-
-          { nu: true } => {
-            let tempfile = (mktemp -t)
-            $in | nu-highlight | save -f $tempfile
-            bat -pf $tempfile
-            rm $tempfile
-          }
-
-        
-          { source: ls, head: ls } => { sort-by type name }
-          { source: ls, head: l } => { sort-by type name | grid -ic }
-          
-          _ => {}
-
+    metadata access {|meta|
+      if $meta.source? == 'ls' {
+        let $input = $in
+        let command = try { view span $meta.span.start $meta.span.end }
+        match $command {
+          ls => { $input | try { sort-by type } catch { $input } | table}
+          l => { $input | try { sort-by type | grid -ic } catch { $input } | table}
         }
-      } ($meta | classify)
+      } else { }
     }
   }
 }
@@ -55,5 +52,15 @@ export def main [] {
 export def default-display-hook [] {
   {
     if (term size).columns >= 100 { table -e } else { table }
+  }
+}
+
+export alias l = ls
+
+export-env {
+  $env.config.hooks.display_output = {
+    do (ls-display-hook)
+    | do (content-type-display-hook)
+    | do (default-display-hook)
   }
 }
