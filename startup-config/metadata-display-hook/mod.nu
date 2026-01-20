@@ -37,12 +37,11 @@ export def content-type-display-hook [] {
 export def ls-display-hook [] {
   {
     metadata access {|meta|
-      if $meta.source? == 'ls' {
-        let $input = $in
-        let command = try { view span $meta.span.start $meta.span.end }
-        match $command {
-          ls => { $input | try { sort-by type } catch { $input } | table}
-          l => { $input | try { sort-by type | grid -ic } catch { $input } | table}
+      if ($meta.source? == 'ls') and (($in | describe -d | get type?) == "list")  {
+        match (view span $meta.span.start $meta.span.end) {
+          #ls => { sort-by { $in.name | path expand | path type } | table --icons }
+          ls => { sort-by type? | table --icons }
+          l => { sort-by type? | grid -ic } 
         }
       } else { }
     }
