@@ -42,8 +42,9 @@ export def ls-display-hook [] {
           #ls => { sort-by { $in.name | path expand | path type } | table --icons }
           ls => { sort-by type? | table --icons }
           l => { sort-by type? | grid -ic } 
+          _ => {}
         }
-      } 
+      } else {}
     }
   }
 }
