@@ -43,7 +43,7 @@ export def ls-display-hook [] {
           ls => { sort-by type? | table --icons }
           l => { sort-by type? | grid -ic } 
         }
-      } else { }
+      } 
     }
   }
 }
