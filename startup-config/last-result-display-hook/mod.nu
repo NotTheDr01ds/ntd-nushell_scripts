@@ -20,7 +20,7 @@ def "stream limit" [] {
 def "metadata set-from" [metadata?: record] {
   if $metadata.source? != null {
     if $metadata.source == "ls" {
-      metadata set --datasource-ls
+      metadata set --path-columns [name]
     } else {
       metadata set --datasource-filepath $metadata.source
     }
