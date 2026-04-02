@@ -43,7 +43,7 @@ export def ls-display-hook [] {
             if ($in | describe) =~ '^table<' {
               match (view span $meta.span.start $meta.span.end) {
                 ls => { sort-by type? | table --icons }
-                l => { sort-by type? | grid -ic } 
+                l => { sort-by type? | grid -ic }
                 _ => { table --icons }
               }
             } else { }
@@ -52,7 +52,7 @@ export def ls-display-hook [] {
           # Output will be sent to next display-hook
           # Output won't be sorted in this case.
           _ => { }
-        } 
+        }
       } else { }
     }
   }
