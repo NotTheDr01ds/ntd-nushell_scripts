@@ -73,7 +73,7 @@ export const last_result_keybinding = {
 
 export def default-display-hook [] {
   {
-    if (term size).columns >= 100 { table -e } else { table }
+    if (term size).columns >= 100 { table --icons -e } else { table --icons }
   }
 }
 
