@@ -48,6 +48,10 @@ export def ls-display-hook [] {
               }
             } else { }
           }
+          # Captures `where` (and other filters) case.
+          # Output will be sent to next display-hook
+          # Output won't be sorted in this case.
+          _ => { }
         } 
       } else { }
     }
@@ -56,7 +60,7 @@ export def ls-display-hook [] {
 
 export def default-display-hook [] {
   {
-    if (term size).columns >= 100 { table -e } else { table }
+    if (term size).columns >= 100 { table --icons -e } else { table --icons }
   }
 }
 
