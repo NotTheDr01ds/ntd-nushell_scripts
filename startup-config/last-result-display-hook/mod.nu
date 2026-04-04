@@ -38,7 +38,8 @@ export def main [] {{
   tee {
     let last_result = (metadata access {|meta| do {} ($meta | kv set -t last_result _meta_tmp) } | stream limit)
     let capturing = try { if (kv get -t last_result LAST_RESULT | default true) { true } else { false } } catch { false }
-    if $capturing {
+    let retrieving = (kv drop -t last_result RETRIEVING | default false)
+    if $capturing and not $retrieving {
       try { kv get -t last_result _3 | kv set -t last_result _4 }
       try { kv get -t last_result _2 | kv set -t last_result _3 }
       try { kv get -t last_result _1 | kv set -t last_result _2 }
@@ -53,6 +54,9 @@ export def main [] {{
 }}
 
 export def "_" [n?: int] {
+  # Set a flag so that we don't store values when the user is simply accessing
+  # a _ value
+  kv set -t last_result RETRIEVING true
   kv get -t last_result $"_($n)" | metadata set-from (kv get -t last_result $"_meta($n)")
 }
 
@@ -66,7 +70,7 @@ export-env {
 export const last_result_keybinding = {
   name: last_result,
   modifier: control
-  keycode: char_-,
+  keycode: char_s,
   mode: [emacs vi_normal vi_insert]
   event: [{ edit: InsertString, value: "(_)" }]
 }
