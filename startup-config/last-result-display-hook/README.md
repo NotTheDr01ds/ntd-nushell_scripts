@@ -36,7 +36,6 @@ use last-result-display-hook *
 
 $env.config.hooks.display_output = {
   do (content-type-display-hook)
-  | do (ls-display-hook)
   | do (last-result-display-hook)
   | do (default-display-hook)
 }
@@ -57,12 +56,12 @@ $env.config.hooks.pre-execution ++= [(last-result-pre-exec-hook)]
 
 ## Persisting
 
-Add one of the above configurations to any `.nu` file in `$nu.default-config-dir/autoload` to have
+Add the configuration above to any `.nu` file in `$nu.default-config-dir/autoload` to have
 it loaded at startup.
 
 Note that the `default-display-hook` included in this package enables file icons in `ls` and requires
 a [Nerd Font](https://www.nerdfonts.com) such as [CaskaydiaCove](https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/CascadiaCode.zip)
-or similar that provides the required glyphs.
+or similar which provides the required glyphs.
 
 # Usage
 
