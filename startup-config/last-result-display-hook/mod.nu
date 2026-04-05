@@ -37,9 +37,19 @@ def "metadata set-from" [metadata?: record] {
 export def main [] {{
   tee {
     let last_result = (metadata access {|meta| do {} ($meta | kv set -t last_result _meta_tmp) } | stream limit)
-    let capturing = try { if (kv get -t last_result LAST_RESULT | default true) { true } else { false } } catch { false }
-    let retrieving = (kv drop -t last_result RETRIEVING | default false)
-    if $capturing and not $retrieving {
+    let capturing = try { if (kv get -t last_result is_capturing | default true) { true } else { false } } catch { false }
+    let commandline = (kv get -t last_result commandline)
+    # If the current command is just inspecting (not modifying) a previous result
+    # then we won't store it
+    let retrieving = (if ($commandline | default "" | str trim) in [
+      '_'
+      '_ 1'
+      '_ 2'
+      '_ 3'
+      '_ 4'
+    ] { true } else { false })
+    # let retrieving = (kv drop -t last_result RETRIEVING | default false)
+    if $capturing and not $retrieving and ($last_result not-in ["" null]) {
       try { kv get -t last_result _3 | kv set -t last_result _4 }
       try { kv get -t last_result _2 | kv set -t last_result _3 }
       try { kv get -t last_result _1 | kv set -t last_result _2 }
@@ -47,16 +57,19 @@ export def main [] {{
       try { kv set -t last_result _ $last_result }
       try { kv get -t last_result _meta3 | kv set -t last_result _meta4 }
       try { kv get -t last_result _meta2 | kv set -t last_result _meta3 }
-      try { kv get -t last_result _meta | kv set -t last_result _meta2 }
+      try { kv get -t last_result _meta1 | kv set -t last_result _meta2 }
+      try { kv get -t last_result _meta | kv set -t last_result _meta1 }
       try { kv get -t last_result _meta_tmp | kv set -t last_result _meta }
     }
   }
 }}
 
+export def last-result-pre-exec-hook [] {
+  # This stores the current commandline for the display-output hoook
+  { kv set -t last_result commandline (commandline)}
+}
+
 export def "_" [n?: int] {
-  # Set a flag so that we don't store values when the user is simply accessing
-  # a _ value
-  kv set -t last_result RETRIEVING true
   kv get -t last_result $"_($n)" | metadata set-from (kv get -t last_result $"_meta($n)")
 }
 
