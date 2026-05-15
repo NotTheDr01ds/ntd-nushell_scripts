@@ -6,6 +6,12 @@ const mime_to_lang = {
   text/tab-separated-values: tsv
   text/x-toml: toml
   text/markdown: markdown
+  text/x-rust: rust
+}
+
+const ext_to_lang = {
+  py: python
+  cpp: 'C++'
 }
 
 export def content-type-display-hook [] {
@@ -26,6 +32,17 @@ export def content-type-display-hook [] {
           $in | save -f $tempfile
           bat -pf --language=($mime_to_lang | get $mimetype) $tempfile
           rm $tempfile
+        }
+
+        "text/plain" => {
+          let ext = ($meta.source | path parse | get extension)
+          $in | if $ext in $ext_to_lang {
+            let tempfile = (mktemp -t)
+            $in | save -f $tempfile
+            bat -pf --language=($ext_to_lang | get $ext) $tempfile
+            rm $tempfile
+          }
+            
         }
 
         _ => {}
