@@ -39,7 +39,7 @@ export-env {
   ]
 
   $env.config.keybindings ++= [{
-      name: ide_completion_menu
+      name: ide_completion_menu_up
       modifier: control
       keycode: char_p
       mode: [emacs vi_normal vi_insert]
@@ -54,7 +54,7 @@ export-env {
     }
 
    {
-      name: ide_completion_menu
+      name: ide_completion_menu_down
       modifier: control
       keycode: char_n
       mode: [emacs vi_normal vi_insert]
